@@ -6,7 +6,7 @@
 
 ## Features
 1. Copying Amazon S3 individual objects larger than 5GB
-2. Rename objects during copy, by changing the destination prefix, for example copy objects in 's3://mybucket/oldprefix/object1' 's3://mybucket/newprefix/myobject1'. To use this, enter a value for the stack parameter destination prefix and set "UpdateKeyLeadingPrefix" to Enable.
+2. Rename objects during copy, by changing the destination prefix, for example copy objects in 's3://mybucket/oldprefix/object1' 's3://mybucket/newprefix/myobject1'. To use this, enter a value for the stack parameter "Destination Bucket Prefix" and set the parameter "UpdateKeyLeadingPrefix" to Enable.
 3. Copy object metadata and tags
 4. Cross region, cross Account copy [Not all objects larger than 5 GB can be copied within the current Lambda function 15-minute timeout limit, especially across AWS Regions. The solution has been tested successfully, under ideal conditions, with up to 2-TB single objects size in the same region and with a 1-TB single object size between two regions EU-WEST-2 and US-EAST-1.]
 
