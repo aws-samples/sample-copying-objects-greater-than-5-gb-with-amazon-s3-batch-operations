@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: 2010-09-09
-Description: An S3 Batch Solution for Copying above 5GB S3 Object Size.
+Description: An S3 Batch Solution for Copying above 5GB S3 Object Size. (uksb-0ah2u0l4e5)
 Metadata:
   Version: '1.0.1'
   License:
