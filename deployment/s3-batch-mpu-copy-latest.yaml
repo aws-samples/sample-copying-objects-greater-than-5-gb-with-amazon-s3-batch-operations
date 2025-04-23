@@ -1,6 +1,7 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: An S3 Batch Solution for Copying above 5GB S3 Object Size.
 Metadata:
+  Version: '1.0.1'
   License:
     Description: >-
       'Copyright 2017 Amazon.com, Inc. and its affiliates. All Rights Reserved.
@@ -19,8 +20,9 @@ Metadata:
     ParameterGroups:
       -
         Label:
-          default: "Destination Bucket and Prefix Parameters"
+          default: "Source Bucket, Destination Bucket and Prefix Parameters"
         Parameters:
+          - SourceBucket
           - BucketForCopyDestination
           - BucketForCopyDestinationPrefix
       -
@@ -37,6 +39,7 @@ Metadata:
           - SDKMaxPoolConnections
           - SDKMaxErrorRetries
           - MultipartChunkSize
+          - MultipartThreshold          
       -
         Label:
           default: "Copy Parameters"
@@ -44,7 +47,7 @@ Metadata:
           - CopyMetadata
           - CopyTagging
           - StorageClass
-          - RestrictSourceStorageClass
+          - UpdateKeyLeadingPrefix
 
     ParameterLabels:
       BucketForCopyDestination:
@@ -58,6 +61,11 @@ Metadata:
 
 
 Parameters:
+  SourceBucket:
+    Description: Please enter the Source Amazon S3 Bucket Name
+    Type: String
+    MinLength: '3'
+    MaxLength: '63'
   BucketForCopyDestination:
     Description: Please enter the Copy Destination S3 Bucket Name
     Type: String
@@ -80,28 +88,25 @@ Parameters:
     MaxLength: '63'
   TransferMaximumConcurrency:
     Description: The maximum number of concurrent requests SDK uses
-    Type: String
+    Type: Number
+    MinValue: 10
+    MaxValue: 940    
     Default: 940
-    MinLength: '1'
-    MaxLength: '3'
-    AllowedPattern: '[1-9][0-9]*'
-    ConstraintDescription: Concurrent Requests Value must be a Valid Integer!
+    ConstraintDescription: Concurrent Requests Value must be a Valid Integer between 10 to 940!
   SDKMaxPoolConnections:
     Description: The maximum number of connections SDK keeps in a connection pool
-    Type: String
+    Type: Number
+    MinValue: 10
+    MaxValue: 940    
     Default: 940
-    MinLength: '1'
-    MaxLength: '3'
-    AllowedPattern: '[1-9][0-9]*'
-    ConstraintDescription: Concurrent Requests Value must be a Valid Integer!
+    ConstraintDescription: Concurrent Requests Value must be a Valid Integer between 10 to 940!
   SDKMaxErrorRetries:
     Description: The number of SDK error retries
-    Type: String
+    Type: Number
+    MinValue: 100
+    MaxValue: 100    
     Default: 100
-    MinLength: '1'
-    MaxLength: '3'
-    AllowedPattern: '[1-9][0-9]*'
-    ConstraintDescription: SDK Retries Value must be a Valid Integer!
+    ConstraintDescription: SDK Retries Value must be a Valid Integer and not lower than 100!
   MultipartChunkSize:
     Description: Multipart Chunk size in bytes (MB*1024*1024) that the SDK uses for multipart transfers.
     Type: String
@@ -110,6 +115,18 @@ Parameters:
     MaxLength: '10'
     AllowedPattern: '[1-9][0-9]*'
     ConstraintDescription: Multipart Chunk size Value must be a Valid Integer!
+  MultipartThreshold:
+    Description: Multipart Threshold size in bytes (MB*1024*1024) when the SDK switches to multipart transfers.
+    Type: Number
+    Default: 5368709120
+    MinValue: 8388608
+    MaxValue: 5368709120
+    AllowedValues:
+      - 8388608
+      - 16777216
+      - 104857600      
+      - 5368709120 
+    ConstraintDescription: Multipart Threshold size Value must be a Valid Integer!
   CopyMetadata:
     AllowedValues:
       - Enable  # Copies metadata
@@ -135,6 +152,34 @@ Parameters:
     Default: STANDARD
     Type: String
 
+  CopyFunctionReservedConcurrency:
+    Description: Choose Unreserved to allow S3 Batch utilize up to 1,000 concurrency, or optionally specify the reserved concurrency for the Lambda function S3 Batch Operations Invokes to perform Copy operations. Note, setting a value impacts the concurrency pool available to other functions. 
+    Type: String
+    Default: Unreserved
+    ConstraintDescription: Value must be within the range of 0 to 200
+    AllowedValues:
+      - Unreserved
+      - 200
+      - 150
+      - 100
+      - 50
+      - 10
+
+  UpdateKeyLeadingPrefix:
+    AllowedValues:
+      - Enable
+      - Disable
+    Description: Choose Yes to Update the leading Prefix to the New Destination Prefix. For Example oldprefix/myobject becomes newprefix/myobject instead of default oldprefix/newprefix/myobject
+    Default: Disable
+    Type: String
+
+   
+
+
+Conditions:
+     NoFunctionConcurrency: !Equals [!Ref CopyFunctionReservedConcurrency, Unreserved]     
+
+
 Resources:
 
   S3BatchCopyLambdaFunctionIamRole:
@@ -155,7 +200,9 @@ Resources:
                   - 's3:GetObjectVersionAcl'
                   - 's3:GetObjectVersionTagging'
                   - 's3:ListBucket*'
-                Resource: '*'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${SourceBucket}
+                  - !Sub arn:${AWS::Partition}:s3:::${SourceBucket}/*                
                 Effect: Allow
               - Action:
                   - 's3:PutObject'
@@ -167,8 +214,8 @@ Resources:
                   - 's3:ListBucket*'
                   - 's3:GetBucketLocation'
                 Resource:
-                  - !Sub arn:aws:s3:::${BucketForCopyDestination}
-                  - !Sub arn:aws:s3:::${BucketForCopyDestination}/*
+                  - !Sub arn:${AWS::Partition}:s3:::${BucketForCopyDestination}
+                  - !Sub arn:${AWS::Partition}:s3:::${BucketForCopyDestination}/*
                 Effect: Allow
       AssumeRolePolicyDocument:
         Version: 2012-10-17
@@ -179,8 +226,6 @@ Resources:
             Action: 'sts:AssumeRole'
 
   S3BatchCopyLambdafunction:
-    DependsOn:
-      - S3BatchCopyLambdaFunctionIamRole
     Type: 'AWS::Lambda::Function'
     Properties:
       Environment:
@@ -191,10 +236,14 @@ Resources:
           max_concurrency: !Ref TransferMaximumConcurrency
           max_pool_connections: !Ref SDKMaxPoolConnections
           multipart_chunksize: !Ref MultipartChunkSize
+          multipart_threshold: !Ref MultipartThreshold          
           copy_metadata: !Ref CopyMetadata
           copy_tagging: !Ref CopyTagging
           copy_storage_class: !Ref StorageClass
-      Runtime: python3.8
+          change_copy_path: !Ref UpdateKeyLeadingPrefix
+      Runtime: python3.12
+      ReservedConcurrentExecutions: 
+        !If [NoFunctionConcurrency, !Ref AWS::NoValue, !Ref CopyFunctionReservedConcurrency ]       
       Timeout: 900
       Description: An S3 Batch Solution for Copying above 5GB S3 Object Size.
       MemorySize: 600
@@ -217,11 +266,13 @@ Resources:
             my_max_pool_connections = int(os.environ['max_pool_connections'])
             my_max_concurrency = int(os.environ['max_concurrency'])
             my_multipart_chunksize = int(os.environ['multipart_chunksize'])
+            my_multipart_threshold = int(os.environ['multipart_threshold'])
             my_max_attempts = int(os.environ['max_attempts'])
             metadata_copy = str(os.environ['copy_metadata'])
             tagging_copy = str(os.environ['copy_tagging'])
             obj_copy_storage_class = str(os.environ['copy_storage_class'])
             new_prefix = str(os.environ['destination_bucket_prefix'])
+            replace_leading_prefix = str(os.environ['change_copy_path'])
 
             # # Set up logging
             logger = logging.getLogger(__name__)
@@ -231,7 +282,7 @@ Resources:
             # boto3.set_stream_logger("")
 
             # Set and Declare Configuration Parameters
-            transfer_config = TransferConfig(max_concurrency=my_max_concurrency, multipart_chunksize=my_multipart_chunksize)
+            transfer_config = TransferConfig(max_concurrency=my_max_concurrency, multipart_chunksize=my_multipart_chunksize, multipart_threshold=my_multipart_threshold)
             config = Config(max_pool_connections=my_max_pool_connections, retries = {'max_attempts': my_max_attempts})
             myargs = {'ACL': 'bucket-owner-full-control', 'StorageClass': obj_copy_storage_class}
 
@@ -287,10 +338,20 @@ Resources:
 
                 # Construct New Path
                 # Construct New Key
+                # Allow object prefix/path to be changed
+                
                 if new_prefix and len(new_prefix) > 0:
-                  newKey = "{0}/{1}".format(new_prefix, s3Key)
+                    if replace_leading_prefix == 'Enable':
+                        leading_path = s3Key.split('/')[0]
+                        newKey = s3Key.replace(leading_path, new_prefix, 1)
+                        logger.info(f"Replace Leading Path Activated {newKey}")
+                    elif replace_leading_prefix == 'Disable':
+                        newKey = "{0}/{1}".format(new_prefix, s3Key)
+                    else:
+                        logger.error(f"Please select valid values Yes or No for replace leading path")
                 else:
-                  newKey = s3Key
+                    newKey = s3Key
+
 
                 newBucket = target_bucket
 
@@ -391,11 +452,19 @@ Resources:
 
 ############################ End Code ########################################
   S3BatchOperationsServiceIamRole:
-    DependsOn:
-      - S3BatchCopyLambdafunction
     Type: 'AWS::IAM::Role'
     Properties:
       Policies:
+        - PolicyName: AllowManifestGeneration
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action:
+                  - 's3:GetBucketLocation'
+                  - 's3:PutInventoryConfiguration'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${SourceBucket}              
+                Effect: Allow      
         - PolicyName: S3BatchOperationsServiceIamRolePolicy0
           PolicyDocument:
             Version: "2012-10-17"
@@ -405,19 +474,19 @@ Resources:
                   - 's3:GetObjectVersion'
                   - 's3:GetBucketLocation'
                 Resource:
-                  - !Sub arn:aws:s3:::${BucketForManifestOrInventory}
-                  - !Sub arn:aws:s3:::${BucketForManifestOrInventory}/*
+                  - !Sub arn:${AWS::Partition}:s3:::${BucketForManifestOrInventory}
+                  - !Sub arn:${AWS::Partition}:s3:::${BucketForManifestOrInventory}/*
                 Effect: Allow
               - Action:
                   - 's3:PutObject'
                   - 's3:GetBucketLocation'
                 Resource:
-                  - !Sub arn:aws:s3:::${BucketForBatchOpsReport}
-                  - !Sub arn:aws:s3:::${BucketForBatchOpsReport}/*
+                  - !Sub arn:${AWS::Partition}:s3:::${BucketForBatchOpsReport}
+                  - !Sub arn:${AWS::Partition}:s3:::${BucketForBatchOpsReport}/*
                 Effect: Allow
               - Action:
                   - 'lambda:InvokeFunction'
-                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${S3BatchCopyLambdafunction}*'
+                Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${S3BatchCopyLambdafunction}*'
                 Effect: Allow
       AssumeRolePolicyDocument:
         Version: 2012-10-17
@@ -429,12 +498,21 @@ Resources:
 
 
 Outputs:
+  SourceS3Bucket:
+    Description: The Source Amazon S3 Bucket where the solution will copy the objects from
+    Value: !Sub ${SourceBucket}
   DestinationS3Bucket:
     Description: The S3 Bucket where the solution will copy the objects to
     Value: !Sub ${BucketForCopyDestination}
   DestinationS3BucketPrefix:
     Description: The Prefix in the Destination S3 Bucket where the solution will copy the objects to
     Value: !Sub ${BucketForCopyDestinationPrefix}
+  LambdaFunctionIAMRoleforCopy:
+    Value: !Ref S3BatchCopyLambdaFunctionIamRole
+    Description: IAM Role associated with the Lambda function invoked by Batch Operations for the copy operation. This might require applicable KMS key permissions. 
+  LambdaFunctionforCopyARN:
+    Value: !GetAtt S3BatchCopyLambdafunction.Arn
+    Description: ARN of the Lambda function invoked by Batch Operations for the copy operation.  
   ManifestOrInventorySourceBucket:
     Description: The S3 Bucket where the CSV manifest or Inventory is located
     Value: !Sub ${BucketForManifestOrInventory}
@@ -453,3 +531,6 @@ Outputs:
   ObjectMultiPartChunkSize:
     Description: This is the chunk size that the SDK uses for multipart transfers of individual files
     Value: !Sub ${MultipartChunkSize}
+  ObjectMultiPartThreshold:
+    Description: This is the chunk size that the SDK uses for multipart transfers of individual files
+    Value: !Sub ${MultipartThreshold}    
