@@ -91,14 +91,14 @@ Parameters:
     Type: Number
     MinValue: 10
     MaxValue: 940    
-    Default: 940
+    Default: 200
     ConstraintDescription: Concurrent Requests Value must be a Valid Integer between 10 to 940!
   SDKMaxPoolConnections:
     Description: The maximum number of connections SDK keeps in a connection pool
     Type: Number
     MinValue: 10
     MaxValue: 940    
-    Default: 940
+    Default: 200
     ConstraintDescription: Concurrent Requests Value must be a Valid Integer between 10 to 940!
   SDKMaxErrorRetries:
     Description: The number of SDK error retries
